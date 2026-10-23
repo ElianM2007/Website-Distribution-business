@@ -1,4 +1,4 @@
-// Test-only adapter: production identity stays entirely within the Sites dispatcher.
+// Test-only Cloudflare binding and module-resolution adapter.
 import { registerHooks } from "node:module";
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";

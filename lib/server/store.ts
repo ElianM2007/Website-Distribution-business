@@ -4,10 +4,10 @@ import { canTransition, createOrderSchema, createProductSchema, patchProductSche
 
 type User = { id: string; name: string; email: string; role: "staff" | "client" };
 type ProductRow = { id: string; sku: string; name: string; category: string; unit: string; price_cents: number; stock: number; reorder_level: number; active: number; updated_at: string };
-type OrderRow = { id: string; number: string; customer_id: string; customer_name: string; customer_email: string; status: string; total_cents: number; created_at: string; delivery_address: string; notes: string; request_hash: string };
+type OrderRow = { id: string; number: string; customer_id: string; customer_name: string; customer_email: string; status: string; total_cents: number; created_at: string; delivery_address: string; fulfillment_method: string; notes: string; request_hash: string };
 type ItemRow = { product_id: string; name: string; sku: string; quantity: number; unit_price_cents: number; order_id: string };
 export const productView = (p: ProductRow) => ({ id:p.id, sku:p.sku, name:p.name, category:p.category, unit:p.unit, priceCents:p.price_cents, stock:p.stock, reorderLevel:p.reorder_level, active:!!p.active, updatedAt:p.updated_at });
-const orderView = (o: OrderRow, items: ItemRow[]) => ({ id:o.id, number:o.number, customerName:o.customer_name, customerEmail:o.customer_email, status:o.status, totalCents:o.total_cents, createdAt:o.created_at, deliveryAddress:o.delivery_address, notes:o.notes, items:items.map(i => ({productId:i.product_id,name:i.name,sku:i.sku,quantity:i.quantity,unitPriceCents:i.unit_price_cents})) });
+const orderView = (o: OrderRow, items: ItemRow[]) => ({ id:o.id, number:o.number, customerName:o.customer_name, customerEmail:o.customer_email, status:o.status, totalCents:o.total_cents, createdAt:o.created_at, deliveryAddress:o.delivery_address, fulfillmentMethod:o.fulfillment_method, notes:o.notes, items:items.map(i => ({productId:i.product_id,name:i.name,sku:i.sku,quantity:i.quantity,unitPriceCents:i.unit_price_cents})) });
 const now = () => new Date().toISOString();
 const uid = () => crypto.randomUUID();
 const constraintError = (error: unknown) => /constraint|unique|stock_valid|status_valid/i.test(String(error));
@@ -22,6 +22,7 @@ export async function getProduct(db: D1Database, id: string) {
   return row;
 }
 export async function createProduct(db: D1Database, input: z.infer<typeof createProductSchema>, actorId: string) {
+  input = {...input,category:await requireCategory(db,input.category)};
   const id = uid(), timestamp = now();
   try {
     await db.batch([
@@ -34,6 +35,7 @@ export async function createProduct(db: D1Database, input: z.infer<typeof create
   return productView(await getProduct(db,id));
 }
 export async function updateProduct(db: D1Database, id: string, input: z.infer<typeof patchProductSchema>) {
+  if (input.category !== undefined) input = {...input,category:await requireCategory(db,input.category)};
   // Only fixed, allowlisted SQL identifiers are interpolated; values are always bound.
   const columns = {sku:"sku",name:"name",category:"category",unit:"unit",priceCents:"price_cents",reorderLevel:"reorder_level",active:"active"} as const;
   const entries = Object.entries(input) as [keyof typeof columns,string | number | boolean][];
@@ -76,6 +78,7 @@ export async function getOrder(db: D1Database, id: string) {
   return row;
 }
 export async function createOrder(db: D1Database, user: User, input: z.infer<typeof createOrderSchema>, idempotencyKey: string | null) {
+  input = createOrderSchema.parse(input);
   const canonical = JSON.stringify({ ...input, notes: input.notes ?? "", items:[...input.items].sort((a,b) => a.productId.localeCompare(b.productId)) });
   const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(canonical));
   const hash = Array.from(new Uint8Array(digest),b => b.toString(16).padStart(2,"0")).join("");
@@ -99,8 +102,8 @@ export async function createOrder(db: D1Database, user: User, input: z.infer<typ
   }
   if (!Number.isSafeInteger(total)) throw new ApiError(400,"Order total exceeds the supported amount.");
   const id = uid(), timestamp = now(), number = `RL-${id.replaceAll("-","").slice(0,12).toUpperCase()}`;
-  const statements = [db.prepare("INSERT INTO orders (id,number,customer_id,customer_name,customer_email,status,total_cents,delivery_address,notes,created_at,updated_at,idempotency_key,request_hash) VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?,?)")
-    .bind(id,number,user.id,user.name,user.email,total,input.deliveryAddress,input.notes ?? "",timestamp,timestamp,idempotencyKey,hash)];
+  const statements = [db.prepare("INSERT INTO orders (id,number,customer_id,customer_name,customer_email,status,total_cents,delivery_address,notes,created_at,updated_at,idempotency_key,request_hash,fulfillment_method) VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)")
+    .bind(id,number,user.id,user.name,user.email,total,input.deliveryAddress,input.notes ?? "",timestamp,timestamp,idempotencyKey,hash,input.fulfillmentMethod)];
   for (const item of input.items) {
     const product = products.get(item.productId)!;
     // Failing this CHECK aborts the entire batch, including the order and every prior stock update.
@@ -123,7 +126,7 @@ export async function createOrder(db: D1Database, user: User, input: z.infer<typ
 export async function updateOrderStatus(db: D1Database, id: string, status: string, actorId: string) {
   const order = await getOrder(db,id);
   if (order.status === status) return (await hydrateOrders(db,[order]))[0];
-  if (!canTransition(order.status,status)) throw new ApiError(409,`An order cannot move from ${order.status} to ${status}.`);
+  if (!canTransition(order.status,status,order.fulfillment_method)) throw new ApiError(409,`An order cannot move from ${order.status} to ${status}.`);
   const timestamp = now();
   // The invalid sentinel deliberately trips the status CHECK on a concurrent transition.
   // A losing cancellation cannot execute any restock because D1 batch rolls it back.
@@ -155,4 +158,20 @@ export async function dashboard(db: D1Database, user: User) {
     return {label:date.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"}),value:monthly.results.find(r => r.month === month)?.value ?? 0};
   });
   return {revenueCents:orderStats?.revenue ?? 0,orderCount:orderStats?.count ?? 0,productCount:productStats?.count ?? 0,lowStockCount:productStats?.low ?? 0,revenueSeries,recentOrders,lowStockProducts:lowStock.results.map(productView)};
+}
+
+export async function listCategories(db:D1Database) {
+  const result = await db.prepare("SELECT id,name FROM categories ORDER BY name LIMIT 1000").all<{id:string;name:string}>();
+  return result.results;
+}
+export async function createCategory(db:D1Database,name:string) {
+  const id = crypto.randomUUID();
+  try { await db.prepare("INSERT INTO categories (id,name,name_key,created_at) VALUES (?,?,?,?)").bind(id,name,name.toLowerCase(),now()).run(); }
+  catch (error) { if (constraintError(error)) throw new ApiError(409,"This category already exists."); throw error; }
+  return {id,name};
+}
+async function requireCategory(db:D1Database,name:string) {
+  const category = await db.prepare("SELECT name FROM categories WHERE name_key=?").bind(name.toLowerCase()).first<{name:string}>();
+  if (!category) throw new ApiError(400,"Choose an existing category. Create it in Categories first.");
+  return category.name;
 }

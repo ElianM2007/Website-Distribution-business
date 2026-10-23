@@ -17,6 +17,7 @@ export const orders = sqliteTable("orders", {
   customerName: text("customer_name").notNull(), customerEmail: text("customer_email").notNull(),
   status: text("status").notNull().default("pending"), totalCents: integer("total_cents").notNull(),
   deliveryAddress: text("delivery_address").notNull(), notes: text("notes").notNull().default(""),
+  fulfillmentMethod: text("fulfillment_method").notNull().default("delivery"),
   createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
   idempotencyKey: text("idempotency_key"), requestHash: text("request_hash").notNull(),
 }, (t) => [check("order_status_valid", sql`${t.status} IN ('pending','confirmed','shipped','delivered','cancelled')`),
@@ -41,4 +42,27 @@ export const orderEvents = sqliteTable("order_events", {
   id: text("id").primaryKey(), orderId: text("order_id").notNull().references(() => orders.id),
   actorId: text("actor_id").notNull(), fromStatus: text("from_status").notNull(),
   toStatus: text("to_status").notNull(), createdAt: text("created_at").notNull(),
+});
+
+export const accounts = sqliteTable("accounts", {
+  id: text("id").primaryKey(), name: text("name").notNull(), email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(), role: text("role").notNull().default("client"),
+  status: text("status").notNull().default("pending"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, t => [check("account_role_valid",sql`${t.role} IN ('staff','client')`),check("account_status_valid",sql`${t.status} IN ('pending','approved','rejected')`)]);
+export const sessions = sqliteTable("sessions", {
+  tokenHash: text("token_hash").primaryKey(), accountId: text("account_id").notNull().references(() => accounts.id),
+  expiresAt: integer("expires_at").notNull(), createdAt: text("created_at").notNull(),
+}, t => [index("sessions_account").on(t.accountId),index("sessions_expiry").on(t.expiresAt)]);
+export const authRateLimits = sqliteTable("auth_rate_limits", {
+  key: text("key").primaryKey(), count: integer("count").notNull(), expiresAt: integer("expires_at").notNull(),
+}, t => [index("auth_rate_expiry").on(t.expiresAt)]);
+export const ownerBootstrap = sqliteTable("owner_bootstrap", {
+  slot: integer("slot").primaryKey(), accountId: text("account_id").notNull().references(() => accounts.id),
+}, t => [check("owner_singleton",sql`${t.slot} = 1`)]);
+export const accountEvents = sqliteTable("account_events", {
+  id: text("id").primaryKey(), accountId: text("account_id").notNull().references(() => accounts.id),
+  actorId: text("actor_id").notNull().references(() => accounts.id), status: text("status").notNull(), createdAt: text("created_at").notNull(),
+});
+export const categories = sqliteTable("categories", {
+  id: text("id").primaryKey(), name: text("name").notNull(), nameKey: text("name_key").notNull().unique(), createdAt: text("created_at").notNull(),
 });

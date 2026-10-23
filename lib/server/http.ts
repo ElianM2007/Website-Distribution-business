@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { getSessionUser } from "./auth";
 import { emptyQuerySchema, uuid } from "./validation";
 import { ApiError } from "./errors";
 export { ApiError } from "./errors";
@@ -19,17 +19,13 @@ export function endpoint(handler: (request: Request) => Promise<Response>) {
     }
   };
 }
-export async function sessionUser() {
-  const user = await getChatGPTUser();
-  if (!user) return null;
-  const staffIds = (env.STAFF_USER_IDS ?? "").split(",").map(s => s.trim()).filter(Boolean);
-  const staffEmails = (env.STAFF_EMAILS ?? "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-  const isStaff = staffIds.includes(user.userId) || staffEmails.includes(user.email.trim().toLowerCase());
-  return { id: user.userId, name: user.displayName, email: user.email, role: isStaff ? "staff" as const : "client" as const };
+export async function sessionUser(request:Request) {
+  return getSessionUser(database(),request);
 }
-export async function authorize(staff = false) {
-  const user = await sessionUser();
+export async function authorize(request:Request,staff = false) {
+  const user = await sessionUser(request);
   if (!user) throw new ApiError(401, "Sign in to continue.");
+  if (user.status !== "approved") throw new ApiError(403,"Your account must be approved by the owner before you can access this application.");
   if (staff && user.role !== "staff") throw new ApiError(403, "Staff access is required.");
   return user;
 }
