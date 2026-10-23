@@ -18,10 +18,14 @@ The initial scope is a distribution workspace for inventory, sales tracking, and
 - Order prices come from the database; clients cannot supply totals.
 - Stock cannot become negative, and cancellation cannot restore stock twice.
 - Invalid JSON, unexpected properties, oversized bodies, invalid IDs and cross-origin writes fail safely.
-- Sample data is visibly labeled and does not populate the production database.
-- Runtime configuration contains staff allowlists; source contains no passwords, tokens or secret values.
+- Anonymous visitors see only the sign-in and account request screen. No production data is seeded.
+- New clients require owner approval. Runtime configuration reserves one-time owner enrollment; source contains no passwords, tokens or secret values.
 - The production build and relevant automated tests pass before handoff.
 
 ## References
 
 The user provided two YouTube links as loose inspiration: https://www.youtube.com/watch?v=2-h2mEf_zcQ and https://www.youtube.com/watch?v=z7tqhsxtQpU&t=937s. Their video content was unavailable to the tools in this session, so no claim is made that the videos were watched or reproduced.
+
+## Account and fulfillment update
+
+Database email/password sessions replace platform identity. Only approved accounts may access business data. Only the owner can approve or revoke clients and define categories/products. Clients can choose delivery (address required) or pickup (collection workflow). Owner bootstrap is a one-time runtime-secret protected step; production password entry is left to the owner.

@@ -1,27 +1,47 @@
 # Relay Distribution
 
-Inventory, sales tracking and client ordering built with React, Vinext, Cloudflare D1 and Zod.
+Inventory, sales tracking and client ordering with React, Vinext, Cloudflare D1 and Zod.
+
+## Accounts and access
+
+The application uses its own database-backed email/password accounts. New registrations remain pending until an administrator approves them. Pending and rejected accounts cannot read products, categories or orders. Every protected request rechecks account approval, so revocation takes effect immediately. Clients can read only their own orders; only administrators manage products, categories, stock, order statuses and account approvals.
+
+Passwords are salted and hashed; plaintext passwords are never stored. Session tokens are random, hashed in the database and sent in HttpOnly cookies. Authentication routes enforce request validation, same-origin checks and persisted rate limits. ChatGPT identity headers do not grant application access.
+
+## Owner setup
+
+Inject `OWNER_EMAIL` and a cryptographically random `OWNER_SETUP_TOKEN` at runtime. Do not commit either value. Open the owner setup form, enter the configured email, your own password and setup token. Owner creation is one-time and cannot be claimed by ordinary registration. After setup, remove the runtime setup token and redeploy. Keep the owner password in your password manager, not in chat or Git.
+
+Only the sign-in and registration pages are accessible to the public. The hosting audience must permit anonymous access to these pages to avoid an additional platform sign-in screen; the application independently protects all business data.
 
 ## Run locally
 
-Use Node 24 and pnpm 11.25.0. Run `pnpm install --frozen-lockfile`, `pnpm build`, then apply `drizzle/0000_flimsy_genesis.sql` using Wrangler D1 local execute against `dist/server/wrangler.json` with persistence `.wrangler/state`. Run `pnpm dev` and open the printed localhost URL.
+Use Node 24 and pnpm 11.25.0:
 
-The anonymous interface is a labeled interactive demo. Its changes are temporary. Signed-in users load real database records. Local sign-in is simulated by the starter only on loopback development; production sign-in is provided by Sites.
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+```
 
-## Runtime configuration
+Set local runtime values in an ignored `.dev.vars` file. Apply pending SQL migrations in filename order, once each:
 
-Set D1 binding `DB`. Inject `STAFF_USER_IDS` or `STAFF_EMAILS` as comma-separated allowlists. Empty allowlists grant no staff privileges. For local staff testing, set STAFF_USER_IDS to the starter's documented local identity in an ignored `.dev.vars` file. Never put production tokens, passwords, or configuration values in source.
+```sh
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/<pending-migration>.sql
+pnpm dev
+```
 
-Production requires the trusted Sites authentication gateway. Do not expose the raw Worker directly: identity headers must be supplied by the trusted gateway, not arbitrary clients. New hosted sites are private; client rollout requires configuring hosting access separately from application roles.
+Open the printed localhost URL. Local and hosted databases are separate. Hosted migrations are applied by Sites during deployment. No production products, categories, customers or passwords are seeded.
 
-## Features
+## Ordering
 
-Staff can create/edit/archive products, adjust inventory, view delivered revenue, and progress or cancel orders. Clients can browse, use the cart, place orders and see their own history. Prices are calculated on the server. Atomic reservations prevent negative stock; cancellation restores inventory once. Product archiving preserves order history.
+Approved clients choose delivery or pickup. Delivery requires an address; pickup does not. Cart quantities can be entered directly. The server calculates prices and reserves inventory atomically, and a successful checkout displays an order-number confirmation. Orders are shared through the online database, and active order screens refresh every 15 seconds.
 
-Strict Zod schemas reject unknown fields and invalid query/path inputs. JSON bodies are bounded to 32 KiB. Writes enforce same-origin requests and a verification header. All database values use prepared bindings. Audit records track stock changes and order transitions. Orders support idempotency keys.
+Administrators confirm and prepare orders. Delivery orders progress to shipped and delivered; pickup orders can be marked collected after confirmation. Cancellation restores inventory once. Archiving a product preserves its order history. Revenue represents completed order value, not collected payment.
 
-## Checks
+## Validation and source control
 
-`pnpm typecheck`, `pnpm test`, and `pnpm build`. GitHub Actions runs these on pushes and pull requests. Tests cover transactional inventory races, cancellation, request validation, CSRF and client isolation.
+Run `pnpm typecheck`, `pnpm test`, and `pnpm build`. CI runs these on GitHub. Tests cover stock races, cancellation, authorization, approval, sessions, CSRF and request validation. Database values use prepared bindings and inputs use strict Zod schemas. JSON bodies are limited to 32 KiB.
 
-Revenue is delivered order value, not collected payments. There is no payment processing, tax calculation, or carrier integration. Product/order lists are bounded; API limit/offset parameters are available for future pagination UI.
+See [source-control policy](docs/SOURCE-CONTROL.md). Authored source, migrations, tests and lockfiles are committed to GitHub. Secrets, live data, dependencies and generated cache/build artifacts are excluded.
+
+There is no payment processing, tax calculation, carrier integration or email-based password recovery. Approval is a business authorization decision, not email ownership verification. Existing orders retain their original customer IDs when authentication changes; they are not automatically attached to new accounts by an unverified matching email.
